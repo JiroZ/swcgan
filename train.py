@@ -1,64 +1,71 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+from models import Generator, Discriminator
 
+# Create instances of Generator and Discriminator
+generator = Generator(input_size=100, output_channels=3, image_size=64)
+discriminator = Discriminator(input_channels=3, patch_size=64, embedding_dim=256, num_heads=8, window_size=7,
+                              image_size=256)
 
-class ResidualDenseSwinBlock(nn.Module):
-    def __init__(self, dim, heads, window_size, mlp_ratio=4.0, num_dense_blocks=3):
-        super(ResidualDenseSwinBlock, self).__init__()
+# Define your dataset and dataloaders
+# For this example, let's use the CIFAR-10 dataset
+transform = transforms.Compose([transforms.Resize(256), transforms.ToTensor()])
+dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+dataloader = DataLoader(dataset, batch_size=16, shuffle=True, num_workers=4)
 
-        # Swin Transformer Components
-        self.norm1 = nn.LayerNorm(dim)
-        self.attn = nn.MultiheadAttention(dim, heads)
-        self.norm2 = nn.LayerNorm(dim)
-        self.mlp = nn.Sequential(
-            nn.Linear(dim, int(dim * mlp_ratio)),
-            nn.GELU(),
-            nn.Linear(int(dim * mlp_ratio), dim)
-        )
+# Define loss and optimizer
+criterion = nn.BCELoss()  # Binary Cross Entropy Loss for GANs
+optimizer_G = optim.Adam(generator.parameters(), lr=0.0002, betas=(0.5, 0.999))
+optimizer_D = optim.Adam(discriminator.parameters(), lr=0.0002, betas=(0.5, 0.999))
 
-        # Dense Connectivity Components
-        self.dense_blocks = nn.ModuleList([
-            nn.Conv2d(dim, dim, kernel_size=3, stride=1, padding=1) for _ in range(num_dense_blocks)
-        ])
-        self.norm_dense = nn.LayerNorm(dim)
+# Training loop
+num_epochs = 10
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def forward(self, x):
-        # Swin Transformer
-        identity = x
-        x = self.norm1(x)
-        attn_output, _ = self.attn(x, x, x)
-        x = identity + attn_output
+for epoch in range(num_epochs):
+    for batch_idx, (real_images, _) in enumerate(dataloader):
+        real_images = real_images.to(device)
 
-        # MLP
-        identity = x
-        x = self.norm2(x)
-        x = self.mlp(x)
-        x = identity + x
+        # Train Discriminator
+        optimizer_D.zero_grad()
 
-        # Dense Connectivity
-        dense_outputs = [x]
-        for dense_block in self.dense_blocks:
-            dense_output = dense_block(dense_outputs[-1])
-            dense_outputs.append(dense_output)
+        # Generate fake images
+        fake_images = generator(torch.randn_like(real_images).to(device))
 
-        x = torch.cat(dense_outputs, dim=1)
-        x = self.norm_dense(x)
+        # Forward pass real images through discriminator
+        real_labels = torch.ones((real_images.size(0), 1)).to(device)
+        real_outputs = discriminator(real_images)
+        loss_real = criterion(real_outputs, real_labels)
 
-        return x
+        # Forward pass fake images through discriminator
+        fake_labels = torch.zeros((real_images.size(0), 1)).to(device)
+        fake_outputs = discriminator(fake_images.detach())
+        loss_fake = criterion(fake_outputs, fake_labels)
 
+        # Total discriminator loss
+        loss_D = 0.5 * (loss_real + loss_fake)
+        loss_D.backward()
+        optimizer_D.step()
 
-# Example usage
-dim = 256
-heads = 8
-window_size = 7
-mlp_ratio = 4.0
-num_dense_blocks = 3
+        # Train Generator
+        optimizer_G.zero_grad()
 
-residual_dense_swin_block = ResidualDenseSwinBlock(dim, heads, window_size, mlp_ratio, num_dense_blocks)
+        # Forward pass fake images through discriminator
+        fake_outputs = discriminator(fake_images)
+        loss_G = criterion(fake_outputs, real_labels)
 
-# Input tensor (batch_size, sequence_length, embedding_dim)
-input_tensor = torch.rand(16, 64, dim)
+        # Generator loss
+        loss_G.backward()
+        optimizer_G.step()
 
-# Forward pass through ResidualDenseSwinBlock
-output_tensor = residual_dense_swin_block(input_tensor)
+        # Print training statistics
+        if batch_idx % 100 == 0:
+            print(f"Epoch [{epoch}/{num_epochs}], Batch [{batch_idx}/{len(dataloader)}], "
+                  f"Loss_D: {loss_D.item():.4f}, Loss_G: {loss_G.item():.4f}")
+
+# Save your trained models if needed
+torch.save(generator.state_dict(), "generator.pth")
+torch.save(discriminator.state_dict(), "discriminator.pth")
