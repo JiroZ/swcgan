@@ -1,35 +1,33 @@
-import torch
-import numpy as np
-import glob as glob
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
 from PIL import Image
+import os
 
 TRAIN_BATCH_SIZE = 128
 TEST_BATCH_SIZE = 1
 
 
-# The SRCNN dataset module.
-class SRCNNDataset(Dataset):
-    def __init__(self, image_paths, label_paths):
-        self.all_image_paths = glob.glob(f"{image_paths}/*")
-        self.all_label_paths = glob.glob(f"{label_paths}/*")
+# The SWCGANDataset dataset module.
+class SWCGANDataset(Dataset):
+    def __init__(self, root_dir, transform_gen, transform_real):
+        self.root_dir = root_dir
+        self.transform_gen = transform_gen
+        self.transform_real = transform_real
+        self.image_list = os.listdir(root_dir)
 
     def __len__(self):
-        return len(self.all_image_paths)
+        return len(self.image_list)
 
-    def __getitem__(self, index):
-        image = Image.open(self.all_image_paths[index]).convert('RGB')
-        label = Image.open(self.all_label_paths[index]).convert('RGB')
-        image = np.array(image, dtype=np.float32)
-        label = np.array(label, dtype=np.float32)
-        image /= 255.
-        label /= 255.
-        image = image.transpose([2, 0, 1])
-        label = label.transpose([2, 0, 1])
-        return (
-            torch.tensor(image, dtype=torch.float),
-            torch.tensor(label, dtype=torch.float)
-        )
+    def __getitem__(self, idx):
+        img_name = os.path.join(self.root_dir, self.image_list[idx])
+        image = Image.open(img_name).convert("RGB")
+
+        img_low_res = self.transform_gen(image)
+        img_real = self.transform_real(image)
+
+        return img_low_res, img_real
+
+    # Define transformations for the generator (64x64) and real images (256x256)
 
 
 # Prepare the datasets.
@@ -37,10 +35,22 @@ def get_datasets(
         train_image_paths, train_label_paths,
         valid_image_path, valid_label_paths
 ):
-    dataset_train = SRCNNDataset(
+    transform_gen = transforms.Compose([
+        transforms.Resize((64, 64)),
+        transforms.ToTensor(),
+        # Add other transformations if needed
+    ])
+
+    transform_real = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.ToTensor(),
+        # Add other transformations if needed
+    ])
+
+    dataset_train = SWCGANDataset(
         train_image_paths, train_label_paths
     )
-    dataset_valid = SRCNNDataset(
+    dataset_valid = SWCGANDataset(
         valid_image_path, valid_label_paths
     )
     return dataset_train, dataset_valid

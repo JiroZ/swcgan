@@ -2,6 +2,40 @@ import torch
 import torch.nn as nn
 
 
+class GeneratorLoss(nn.Module):
+    def __init__(self, lambda_adv):
+        super(GeneratorLoss, self).__init__()
+        self.lambda_adv = lambda_adv
+        self.criterion_L1 = nn.L1Loss()
+
+    def forward(self, xr, zf, discriminator_real, discriminator_fake):
+        # Content Loss (L1 Pixel Loss)
+        Lcont = self.criterion_L1(xr, zf)
+
+        # Adversarial Loss for Generator (Relativistic Average GAN)
+        adv_loss_real = -torch.log(1 - discriminator_real(xr)).mean()
+        adv_loss_fake = -torch.log(discriminator_fake(zf)).mean()
+        Ladv = adv_loss_real + adv_loss_fake
+
+        # Total Generator Loss
+        LG = Lcont + self.lambda_adv * Ladv
+
+        return LG
+
+
+class DiscriminatorLoss(nn.Module):
+    def __init__(self):
+        super(DiscriminatorLoss, self).__init__()
+
+    def forward(self, xr, zf, discriminator_real, discriminator_fake):
+        # Adversarial Loss for Discriminator (Relativistic Average GAN)
+        adv_loss_real = -torch.log(1 - discriminator_real(xr)).mean()
+        adv_loss_fake = -torch.log(1 - discriminator_fake(zf)).mean()
+        LD = adv_loss_real + adv_loss_fake
+
+        return LD
+
+
 class WindowAttention(nn.Module):
     def __init__(self, dim, window_size, num_heads):
         super(WindowAttention, self).__init__()
